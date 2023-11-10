@@ -1,0 +1,309 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[14]:
+
+
+import numpy as np
+from Test import * #tu mam mps i inne takie, dołączone w załączniku
+from en_full import * #kod z zajęć
+import matplotlib.pyplot as plt
+from scipy.sparse.linalg import eigsh,LinearOperator
+Z = [[1.,0.],[0.,-1.]]
+X = [[0.,1.],[1.,0.]]
+ID = [[1.,0.],[0.,1.]]
+z0 = [[0,0],[0,0]]
+#zad 1
+def H(dim,hz,h):
+    temp = []
+    hzZ = [[-hz,0.],[0.,hz]]
+    hX = [[0.,-h],[-h,0.]]
+    O = np.add(hzZ,hX)
+    negZ = [[-1.,0.],[0.,1.]]
+    temp.append([O,negZ,ID])
+    for i in range(dim-2):
+        temp.append([[ID,z0,z0],[Z,z0,z0],[O,negZ,ID]])
+    temp.append([ID,Z,O])
+    return temp
+
+
+# In[2]:
+
+
+#zad 2
+def LiR(mps,o,j):
+    if j != 0:
+        L = np.einsum('ij,kil->jkl', mps[0],o[0])
+        L = np.einsum('jkl,lw->jkw', L,np.conjugate(mps[0]))
+    else:
+       L = 0
+    for i in range(1,j):
+        L = np.einsum('ijk,iac-> jkac',L,mps[i])
+        L = np.einsum('jkac,jdab->kcdb',L,o[i])
+        L = np.einsum('kcdb,kbe-> cde',L,np.conjugate(mps[i]))
+    if j != len(mps)-1:
+        R = np.einsum('ij,kjl->ikl',mps[-1],o[-1])
+        R = np.einsum('ikl,wl->ikw',R,np.conjugate(mps[-1])) 
+    else:
+        R = 0
+    for i in range(2,len(mps)-j):
+        R = np.einsum('ijk,cai-> jkca',R,mps[-i])   
+        R = np.einsum('jkca,djab-> kcdb',R,o[-i])   
+        R = np.einsum('kcdb,ebk-> cde',R,np.conjugate(mps[-i]))
+    return L,R
+def Energy(L,R,o,mps,j):
+    if j == 0:
+        temp = np.einsum('ij,jkl->ikl',mps[j],R)
+        energy = np.einsum('mij,imk->jk',o[j],temp)
+        return np.einsum('ab,ab',energy,np.conjugate(mps[j]))
+    elif j ==len(mps)-1:
+        temp = np.einsum('ij,ikl -> jkl',mps[j],L)
+        energy = np.einsum('jkl,kja->al',temp,o[j])
+        return np.einsum('ab,ba',energy,np.conjugate(mps[j])) 
+    else:
+        Ltemp = np.einsum('ijk,iac-> jkac',L,mps[j])
+        Ltemp = np.einsum('jkac,jdab->kcdb',Ltemp,o[j])
+        Ltemp = np.einsum('kcdb,kbe-> cde',Ltemp,np.conjugate(mps[j]))
+        return np.einsum('ijk,ijk',Ltemp,R)
+
+
+# In[3]:
+
+
+#zad 2 test
+x = random(10)
+HQTIM = H(10,10,10)
+mps = MCMPS(x,2)
+L,R=LiR(mps,HQTIM,2)
+print(Energy(L,R,HQTIM,mps,2)-en_H(x,10,10,10))
+
+
+# In[4]:
+
+
+#zad 3--5, czyli szukanie minimum zaczynam od znalezienia heff*A
+
+
+# In[5]:
+
+
+def hA(mpsV,L,R,o,j,n): 
+    #hjAj zad 3
+    if j == 0:
+        d = np.shape(o[j])[2]
+        Dr = np.shape(R)[0]
+        temp = np.reshape(mpsV, (d,Dr))
+        h = np.einsum('abc, xaz->bxcz',o[j],R)
+        hAtemp = np.einsum('bxcz, bx-> cz ',h, temp)
+        hAtemp = np.reshape(hAtemp, (Dr*d))
+        return hAtemp
+    elif j == n-1:
+        d = np.shape(o[j])[2]
+        Dl = np.shape(L)[0]
+        temp = np.reshape(mpsV, (Dl,d))
+        h = np.einsum('abc, bxy->axcy',L,o[j])
+        hAtemp = np.einsum('bcxz, bc-> xz',h, temp) 
+        hAtemp = np.reshape(hAtemp, (Dl*d))
+        return hAtemp
+    else:
+        Dl = np.shape(L)[0]
+        d = np.shape(o[j])[2]
+        Dr = np.shape(R)[0]
+        temp = np.reshape(mpsV, (Dl,d,Dr))
+        h = np.einsum('abc, bxwz->acxwz',L,o[j])
+        h = np.einsum('acxwz, yxp->acwzyp',h,R)
+        hAtemp = np.einsum('acwzyp, awy->czp',h, temp)
+        hAtemp = np.reshape(hAtemp, (Dl*Dr*d))
+        return hAtemp
+
+
+# In[6]:
+
+
+#minimalizacja 1 oczka zad 4
+def A1min(mps,L,R,o,j):
+    n = len(mps)
+    if(j==0):
+        d = np.shape(o[j])[2]
+        Dr = np.shape(R)[0]
+        x = np.reshape(mps[j], (d*Dr))
+        fa = lambda x : hA(x, L,R,o,j,n)
+        dim = Dr*d
+        A = LinearOperator((dim,dim),matvec = fa)
+        l,v = eigsh(A,1,which = 'SA')
+        v = np.reshape(v,(d,Dr))
+    elif(j==len(mps)-1):
+        Dl = np.shape(L)[0]
+        d = np.shape(o[j])[2]
+        x = np.reshape(mps[j], (Dl*d))
+        fa = lambda  x : hA(x, L,R,o,j,n)
+        dim = Dl*d
+        A = LinearOperator((dim,dim),matvec = fa)
+        l,v = eigsh(A,1,which = 'SA')
+        v = np.reshape(v,(Dl,d))
+    else:
+        Dl = np.shape(L)[0]
+        d = np.shape(o[j])[2]
+        Dr = np.shape(R)[0]
+        x = np.reshape(mps[j], (Dl*d*Dr))
+        fa = lambda x : hA(x, L,R,o,j,n)
+        dim = Dl*Dr*d
+        A = LinearOperator((dim,dim),matvec = fa)
+        l,v = eigsh(A,1,which = 'SA')
+        v = np.reshape(v,(Dl,d,Dr))
+    return v
+
+
+# In[7]:
+
+
+#zad 5
+def sweep(x,h,hz,freq):
+    mps = MCMPS(x,0)
+    o = H(len(mps),hz,h)
+    z=0;
+    temp=0
+    for T in range(freq):     
+        if(temp!=0):
+            break
+        for i in range(0,len(mps)):
+            if(temp!=0):
+                break
+            L,R=LiR(mps,o,i)
+            new = A1min(mps,L,R,o,i)
+            mps[i] = new
+            if(abs(Energy(L,R,o,mps,i).real - en_GS(len(mps),h,hz))<1e-7):
+                print("Energia to: ", Energy(L,R,o,mps,i).real , ", zostala osiagnieta po liczbie krokow: ", z)
+                E = Energy(L,R,o,mps,i).real
+                temp=1
+                break
+            if(i != len(mps)-1):
+                MoveOrt(mps,i,i+1)
+            z=z+1
+        for j in range(0,len(mps)-1):
+            if(temp!=0):
+                break
+            L,R=LiR(mps,o,len(mps)-1-j)
+            new = A1min(mps,L,R,o,len(mps)-1-j)
+            mps[len(mps)-1-j] = new
+            if(abs(Energy(L,R,o,mps,len(mps)-1-j).real - en_GS(len(mps),h,hz))<1e-7):
+                print("Energia to: ", Energy(L,R,o,mps,len(mps)-1-j).real , ", zostala osiagnieta po liczbie krokow: ", z)
+                E = Energy(L,R,o,mps,len(mps)-1-j).real
+                temp=1
+                break
+            MoveOrt(mps,len(mps)-1-j,len(mps)-2-j)
+            z=z+1
+    return mps, E, z
+        
+
+
+# In[8]:
+
+
+x=random(7)
+print(len(MCMPS(x,0)))
+HQTIM = H(7,1,1)
+E=en_GS(7,1,1)
+Y=sweep(x,1,1,1)
+print(Y[1].real)
+print(en_GS(7,1,1))
+#Tutaj wychodzi do momentu aż przestaje wychodzić
+
+
+# In[9]:
+
+
+#zad 6
+h=0
+hz=0
+tabE=[]
+tabZ = []
+for n in range(8):
+    print("dla n = ",n+4)
+    x = random(n+4)
+    Y = sweep(x,h,hz,2)
+    tabE.append(Y[1])
+    tabZ.append(Y[2])
+plt.plot(tabZ,tabE,color="blue")
+plt.show()
+
+
+# In[10]:
+
+
+h=0.1
+hz=0
+tabE=[]
+tabZ = []
+for n in range(8):
+    print("dla n = ",n+4)
+    x = random(n+4)
+    Y = sweep(x,h,hz,3)
+    tabE.append(Y[1])
+    tabZ.append(Y[2])
+plt.plot(tabZ,tabE,color="blue")
+plt.show()
+
+
+# In[11]:
+
+
+h=1
+hz=0
+tabE=[]
+tabZ = []
+for n in range(8):
+    print("dla n = ",n+4)
+    x = random(n+4)
+    Y = sweep(x,h,hz,3)
+    tabE.append(Y[1])
+    tabZ.append(Y[2])
+plt.plot(tabZ,tabE,color="blue")
+plt.show()
+
+
+# In[12]:
+
+
+h=10
+hz=0
+tabE=[]
+tabZ = []
+for n in range(8):
+    print("dla n = ",n+4)
+    x = random(n+4)
+    Y = sweep(x,h,hz,3)
+    tabE.append(Y[1])
+    tabZ.append(Y[2])
+plt.plot(tabZ,tabE,color="blue")
+plt.show()
+
+
+# In[13]:
+
+
+#zad 7 robię dla random(6)
+hz=1e-4
+tabE=[]
+tabZ = []
+for i in range(0,40):
+    h=0.05*i
+    temp=0
+    x = random(6)
+    Y = sweep(x,h,hz,3)[0]
+    O = H(6,hz,h)
+    for i in range(5):
+        temp = temp + E_1opt(Y,i,Z)
+        Y = MoveOrt(Y,i,i+1)
+    temp = temp/n
+    tabE.append(temp)
+    tabZ.append(h)
+plt.plot(tabZ,tabE,color="blue")
+plt.show()
+
+
+# In[ ]:
+
+
+
+

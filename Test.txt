@@ -1,0 +1,226 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[10]:
+
+
+import numpy as np
+from  numpy.linalg import svd
+import matplotlib.pyplot as plt
+#funkcje dane
+def Is_GS(n):
+  x = np.random.rand(2)+1.j*np.random.rand(2)
+  x = x/np.sqrt(np.vdot(x,x))
+  v = np.zeros(2**n,dtype=np.complex128)
+  v[0] = x[0]
+  v[2**n-1] = x[1]
+  v = np.reshape(v,list(np.repeat(2,n)))
+  return v
+
+def EV_1s(psi,s,op):
+   n = len(psi.shape)
+   psiop = np.tensordot(op,psi,axes=((1,),(s,)))
+   psiop = np.transpose(np.reshape(psiop,(2,2**(s),2**(n-s-1))),(1,0,2))
+   EV = np.vdot(np.reshape(psi,-1),np.reshape(psiop,-1))
+   return np.real(EV)
+
+def EV_2s(psi,s,op):
+   n = len(psi.shape)
+   psiop = np.tensordot(op,psi,axes=((2,3),(s,s+1)))
+   psiop = np.transpose(np.reshape(psiop,(4,2**(s),2**(n-s-2))),(1,0,2))
+   EV = np.vdot(np.reshape(psi,-1),np.reshape(psiop,-1))
+   return np.real(EV)
+
+def random(n):
+  x = np.random.rand(2**n)+1.j*np.random.rand(2**n)
+  x = x/np.sqrt(np.vdot(x,x))
+  x = np.reshape(x,list(np.repeat(2,n)))
+  return x
+
+
+# In[11]:
+
+
+#Funkcje tak naprawdę dane z pierwszych zadań, Te funkcje od razu robią pomijanie bardzo małych
+#wartości osobliwych w celu zoptymalizowania pracy kodu
+def to_left_can_first(psi):
+    sv = psi.shape 
+    n = psi.ndim
+    psi = np.reshape(psi,(sv[0],np.prod(sv[1:]))) 
+    [u,s,vh] = np.linalg.svd(psi,full_matrices=False)
+    s=s[s>1.e-15]
+    D = s.size 
+    tempu = u[:,:D]
+    tempv = vh[:D,:]
+    psir = np.diag(s)@tempv
+    psir = np.reshape(psir,((D,)+sv[1:]))  
+    return tempu,psir 
+def to_left_can_next(psi): 
+    sv = psi.shape 
+    n = psi.ndim 
+    psi = np.reshape(psi,(sv[0]*sv[1],np.prod(sv[2:]))) 
+    [u,s,vh] = np.linalg.svd(psi,full_matrices=False)
+    s=s[s>1.e-15]
+    D = s.size
+    tempu = u[:,:D]
+    tempv = vh[:D,:]
+    psir = np.diag(s)@tempv 
+    psir = np.reshape(psir,((D,)+sv[2:]))  
+    tempu = np.reshape(tempu, (sv[0],sv[1],D))
+    return tempu,psir 
+def LCMPS(psi):
+    n = len(np.shape(psi))
+    psi_temp = psi
+    mps = []
+    [u1, psi_t] = to_left_can_first(psi_temp)
+    mps.append(u1)
+    for i in range (n-2):
+        [u, psi_t] = to_left_can_next(psi_t)
+        mps.append(u)
+    mps.append(psi_t)
+    return mps
+#Wszystko powyżej jest potrzebne aby wygenerować MPSa
+def bond_dim(psi):
+    dim = []
+    dim.append(np.shape(psi[0])[0])
+    for i in range(1,len(psi)-1):
+        dim.append(np.shape(psi[i])[2])
+    return dim
+#Powyżej funkcja do sprawdzania bond dimension, działa teżdla MCMPS
+
+
+# In[12]:
+
+
+def to_right_can_first(psi):
+    sv = psi.shape
+    n = psi.ndim 
+    psi = np.reshape(psi, (np.prod(sv[:-1]),sv[-1]))
+    [u,s,vh] = np.linalg.svd(psi,full_matrices=False) 
+    s=s[s>1.e-15]
+    D = s.size
+    tempu = u[:,:D]
+    tempv = vh[:D,:]
+    psit = tempu@np.diag(s)
+    psit = np.reshape(psit,((sv[:-1]+(D,))))   
+    return psit, tempv 
+def to_right_can_next(psi): 
+    sv = psi.shape 
+    n = psi.ndim 
+    psi = np.reshape(psi,(np.prod(sv[:-2]),sv[-1]*sv[-2]))
+    [u,s,vh] = np.linalg.svd(psi,full_matrices=False) 
+    s=s[s>1.e-15]
+    D = s.size
+    tempu = u[:,:D]
+    tempv = vh[:D,:]
+    psir = tempu@np.diag(s)
+    psir = np.reshape(psir, (sv[:-2]+(D,)))
+    tempv = np.reshape(tempv,(D,sv[-2],sv[-1]))
+    return psir, tempv 
+def RCMPS(psi):
+    n = len(np.shape(psi)) 
+    psi_temp = psi
+    mps = []
+    [psi_t, v1] = to_right_can_first(psi_temp)
+    mps.append(v1)
+    for i in range (n-2):
+        [psi_t, v1] = to_right_can_next(psi_t)
+        mps.insert(0,v1)
+    mps.insert(0,psi_t)
+    return mps
+#Powyżej przepisana funkcja LCMPS tak, aby robiła Right canonical mpsa, jest to robione analogicznie
+#jak dla LCMPS, właściwie jest to funkcja przekopiowana i napisał ją Pan
+
+
+# In[13]:
+
+
+#zadanie 6- mixed canonical MPS tworzę w taki sposób, że jeżeli ortogonality center mam w J, to
+#mam J-1 macierzy U po lewej oraz N-j-2 macierzy V po prawej, a w środku ortogonality center. Czyli robię
+#LCMPS J-1 razy, potem z tego co zostaje N-j-2 RCMPS i mam MCMPS
+def MCMPS(psi, j): 
+    n = len(np.shape(psi))  
+    r = []
+    tot = []
+    if j > n-1 or j<0:
+        print("jesteś poza tensorem, spróbuj jeszcze raz")
+        return -1
+    if j == 0:
+       # print("Uwaga, dla j=0 'ortogonality center' jest miejscem wysuniętym najbardziej na lewo, więc tak naprawdę to będzie RCMPS, użyj tej funkcji")
+        return RCMPS(psi)
+    if j == n-1:
+        #print("Uwaga, dla j=0 'ortogonality center' jest miejscem wysuniętym najbardziej na prawo, więc tak naprawdę to będzie LCMPS, użyj tej funkcji")
+        return LCMPS(psi)
+    else:
+        [u, psi_l] = to_left_can_first(psi)
+        tot.append(u) #tu wpisuje pierwsze u
+        for i in range(1,j):
+            [u, psi_l] = to_left_can_next(psi_l)
+            tot.append(u) #tu wpisuje każde kolejne u
+        [psi_r, v] = to_right_can_first(psi_l)
+        r.append(v)
+        for i in range(n-(j+2)):
+            [psi_r, v] = to_right_can_next(psi_r)
+            r.insert(0,v)
+        tot.append(psi_r) #tu wpisuje ort. center
+        tot.extend(r) #tu wpisuje każde r
+        return tot
+
+
+# In[26]:
+
+
+def MCMPScheck(psi,j):
+    norma = []
+    norma.append(np.einsum('ji,jk->ik',psi[0],np.conjugate(psi[0]))) #tu zwijam 1 tensor z lewej
+    for i in range(1,len(psi)-1):
+        if(i < j):
+            norma.append(np.einsum('ijk,ijl->kl',psi[i],np.conjugate(psi[i]))) #wszystkie lewe do ort.
+        elif(i > j):
+            norma.append(np.einsum('ijk,ljk->il',psi[i],np.conjugate(psi[i])))#wszystkie prawe po ort do last
+    norma.append(np.einsum('ij,kj->ik',psi[len(psi)-1],np.conjugate(psi[len(psi)-1])))#last
+    return norma
+def MCMPSnorm(psi,j):
+    return np.einsum('ijk,ijk',psi[j],np.conjugate(psi[j]))
+#macierze i tensory
+def BeforeMPS(psi): 
+    temp = np.tensordot(psi[0], psi[1], axes = [1,0])
+    for i in range(2, len(psi)):
+        temp = np.tensordot(temp, psi[i], axes = [-1,0])
+    return temp
+def MoveOrt(mps, old, new):
+    if old < new:
+        for i in range(old, new):
+            left = mps[i].shape
+            right = mps[i+1].shape
+            v = np.reshape(mps[i], (-1,left[-1]))
+            U,S,V = np.linalg.svd(v,full_matrices=False)
+            mps[i] = np.reshape(U,left)
+            sv = np.diag(S)@V
+            mps[i+1] = np.tensordot(sv, mps[i+1], axes=(-1, 0))
+    elif new < old:
+        for i in range(old,new,-1):
+            left = mps[i-1].shape
+            right = mps[i].shape
+            v = np.reshape(mps[i], (left[-1], -1))
+            U, S, V = np.linalg.svd(v,full_matrices=False)
+            mps[i] = np.reshape(V, right)
+            us = U @ np.diag(S)
+            U =  np.tensordot(mps[i-1], us, axes=(-1, 0))
+            mps[i-1] = np.reshape(U,left)
+    return mps
+
+def E_1opt(temp, j, o): #temp musi być mpsem
+    #temp = MCMPS(psi,j)
+    ps = temp[j]
+    cps = np.conjugate(temp[j])
+    if j == 0:
+        tym = np.einsum('ij,ik->jk', ps, o)
+        return np.einsum('ij,ij',tym,cps)
+    elif j == len(temp)-1:
+        tym = np.einsum('ij,jk->ik', ps, o)
+        return np.einsum('ij,ji',tym,cps)
+    else:
+        tym = np.einsum('ijk,jl->ilk', ps, o)
+        return np.einsum('ijk,ijk',tym,cps)
+    return c.real
